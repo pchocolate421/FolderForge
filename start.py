@@ -29,32 +29,43 @@ def should_ignore_dir(dir_path: Path, root: Path, patterns: List[str]) -> bool:
         for p in patterns
     )
 
-def write_tree(root: Path, output_file: Path, ignore_patterns: List[str], verbose: bool) -> None:
-    def _tree(dir_path: Path, prefix: str = "") -> list[str]:
+def write_tree(root: Path, output_file: Path, ignore_patterns: List[str], verbose: bool, max_depth: Optional[int]) -> None:
+    def _tree(dir_path: Path, prefix: str = "", current_depth: int = 0) -> list[str]:
+        if max_depth is not None and current_depth > max_depth:
+            return []
+
         if verbose:
             print(f"[SCAN] {dir_path}")
+
         entries = sorted(
             (e for e in dir_path.iterdir() if not (e.is_dir() and should_ignore_dir(e, root, ignore_patterns))),
             key=lambda e: (not e.is_dir(), e.name.lower()),
         )
+
         lines = []
         for i, entry in enumerate(entries):
             if entry.is_dir() and should_ignore_dir(entry, root, ignore_patterns):
                 if verbose:
                     print(f"[SKIP] Ignored folder: {entry}")
                 continue
+
             connector = "└─ " if i == len(entries) - 1 else "├─ "
             line = prefix + connector + entry.name + ("/" if entry.is_dir() else "")
             lines.append(line)
+
             if entry.is_dir():
-                extension = "   " if i == len(entries) - 1 else "│  "
-                lines.extend(_tree(entry, prefix + extension))
+                extension = "   " if i == len(entries) - 1 else "│  "
+                lines.extend(_tree(entry, prefix + extension, current_depth + 1))
+
         return lines
 
     if verbose:
         print(f"[EXPORT] Starting from root: {root}")
-    lines = [root.name + "/"]
-    lines.extend(_tree(root))
+
+    lines = [root.name + "/"] if max_depth is None or max_depth >= 0 else []
+    if max_depth is None or max_depth > 0:
+        lines.extend(_tree(root, current_depth=0))
+
     output_file.write_text("\n".join(lines), encoding="utf-8")
     if verbose:
         print(f"[DONE] Structure exported to: {output_file}")
@@ -169,6 +180,7 @@ def main():
     export_parser.add_argument("--ignore", action="append", default=[], help="Glob pattern for directories to ignore.")
     export_parser.add_argument("--ignore-file", type=Path, help="File with glob patterns to ignore.")
     export_parser.add_argument("--verbose", action="store_true", help="Show detailed actions.")
+    export_parser.add_argument("--depth", type=int, default=None, help="Maximum depth of the directory tree to export (0 for root only, None for unlimited).")
 
     create_parser = subparsers.add_parser("create", help="Create folder structure from a text file.")
     create_parser.add_argument("file", type=Path, help="Path to the text file containing the folder structure.")
@@ -185,16 +197,16 @@ def main():
             print(f"Error: {root_dir} is not a valid directory")
             return
         patterns = load_ignore_patterns(args.ignore, args.ignore_file)
-        write_tree(root_dir, out_file, patterns, args.verbose)
+        write_tree(root_dir, out_file, patterns, args.verbose, args.depth)
 
-    elif args.command == "create":
-        file_path = args.file.resolve()
-        dest_root = args.dir.resolve()
-        if not file_path.is_file():
-            print(f"Error: {file_path} is not a valid file")
+    elif args.command == "export":
+        root_dir = Path(args.root).resolve()
+        out_file = Path(args.output).resolve()
+        if not root_dir.is_dir():
+            print(f"Error: {root_dir} is not a valid directory")
             return
-        dest_root.mkdir(parents=True, exist_ok=True)
-        create_structure_from_file(file_path, dest_root, args.strip_root, args.verbose)
+        patterns = load_ignore_patterns(args.ignore, args.ignore_file)
+        write_tree(root_dir, out_file, patterns, args.verbose, args.depth)
 
 if __name__ == "__main__":
     main()

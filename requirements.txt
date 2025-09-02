@@ -1,0 +1,1 @@
+# project uses only modules from the Python standard library,so no external dependencies are required.
